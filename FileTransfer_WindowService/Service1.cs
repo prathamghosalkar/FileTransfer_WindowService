@@ -21,101 +21,125 @@ namespace FileTransfer_WindowService
 
         protected override void OnStart(string[] args)
         {
-            WriteToFile("Service started at " + DateTime.Now);
+            timer = new Timer(30000); // Poll every 30 seconds
             timer.Elapsed += new ElapsedEventHandler(OnElapsedTime);
-            timer.Interval = 30000; // 30 seconds
-            timer.Enabled = true;
+            timer.Start();
+            WriteToFile("Service started.");
         }
 
         protected override void OnStop()
         {
-            WriteToFile("Service stopped at " + DateTime.Now);
-            timer.Enabled = false;
+            timer.Stop();
+            WriteToFile("Service stopped.");
         }
 
-        private void OnElapsedTime(object source, ElapsedEventArgs e)
+        private void OnElapsedTime(object sender, ElapsedEventArgs e)
         {
-            WriteToFile("Polling the directory at " + DateTime.Now);
             ProcessFilesInDirectory();
         }
 
         private void ProcessFilesInDirectory()
         {
-            try
+            if (!Directory.Exists(sourceFolder))
             {
-                if (!Directory.Exists(sourceFolder))
-                {
-                    WriteToFile($"Source folder does not exist: {sourceFolder}");
-                    return;
-                }
+                WriteToFile($"Source folder does not exist: {sourceFolder}");
+                return;
+            }
 
-                string[] files = Directory.GetFiles(sourceFolder, "*.txt");
-                foreach (string filePath in files)
+            string[] files = Directory.GetFiles(sourceFolder, "*.txt");
+            foreach (string file in files)
+            {
+                string fileName = Path.GetFileName(file);
+                var parts = fileName.Split(' ');
+                if (parts.Length >= 3) // Ensure parts length is at least 3
                 {
-                    string fileName = Path.GetFileNameWithoutExtension(filePath);
-                    string[] fileNameParts = fileName.Split(' ');
-
-                    if (fileNameParts.Length >= 3)
+                    try
                     {
-                        string channel = fileNameParts[0].Substring(1, 1); // e.g., P0 -> channel = 0
-                        string date = fileNameParts[1]; // e.g., 01-10-2011
-                        string time = fileNameParts[2]; // e.g., 14:25:36
+                        int channel = int.Parse(parts[0].Substring(1)); // Remove 'P' and parse channel
+                        string datePart = parts[1]; // "01-10-2011"
+                        string timePart = parts[2]; // "142536"
+                        string formattedTime = timePart.Insert(2, ":").Insert(5, ":"); // "14:25:36"
+                        DateTime dateTime = DateTime.ParseExact($"{datePart} {formattedTime}", "dd-MM-yyyy HH:mm:ss", null);
 
-                        // Convert date to proper format
-                        DateTime parsedDate;
-                        if (DateTime.TryParseExact(date, "dd-MM-yyyy", null, System.Globalization.DateTimeStyles.None, out parsedDate))
+                        // Create the combined CallID from Channel, Date, and Time
+                        string callId = $"{channel}-{dateTime:yyyyMMddHHmmss}"; // Format: Channel-YYYYMMDDHHMMSS
+
+                        // Check if the CallID already exists in the database
+                        if (IsCallIdExists(callId))
                         {
-                            // Save details to database
-                            SaveToDatabase(channel, parsedDate, time);
-
-                            // Move the processed file to the processed folder
-                            if (!Directory.Exists(processedFolder))
-                            {
-                                Directory.CreateDirectory(processedFolder);
-                            }
-                            string destFilePath = Path.Combine(processedFolder, Path.GetFileName(filePath));
-                            File.Move(filePath, destFilePath);
-
-                            WriteToFile($"File {filePath} processed and moved to {destFilePath} at {DateTime.Now}");
+                            WriteToFile($"CallId {callId} already exists. Skipping database entry for file {fileName}.");
                         }
                         else
                         {
-                            WriteToFile($"Invalid date format in file name: {filePath}");
+                            // Save to database using CallID
+                            SaveToDatabase(callId, channel, dateTime);
                         }
+
+                        // Move file to processed location
+                        string destFile = Path.Combine(processedFolder, fileName);
+                        File.Move(file, destFile);
+
+                        WriteToFile($"File {fileName} processed and moved to {destFile}.");
                     }
-                    else
+                    catch (FormatException ex)
                     {
-                        WriteToFile($"Invalid file name format: {filePath}");
+                        WriteToFile($"Invalid format in file {Path.GetFileName(file)}: {ex.Message}");
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteToFile($"Error processing file {Path.GetFileName(file)}: {ex.Message}");
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                WriteToFile($"Error during file processing: {ex.Message}");
+                else
+                {
+                    WriteToFile($"Unexpected file name format: {fileName}");
+                }
             }
         }
 
-        private void SaveToDatabase(string channel, DateTime date, string time)
+        private bool IsCallIdExists(string callId)
         {
-            try
+            string query = "SELECT COUNT(1) FROM ProcessedFiles_New WHERE CallId = @CallId";
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            using (SqlCommand cmd = new SqlCommand(query, conn))
             {
-                using (SqlConnection conn = new SqlConnection(connectionString))
+                cmd.Parameters.AddWithValue("@CallId", callId);
+
+                try
                 {
                     conn.Open();
-                    string query = "INSERT INTO FileDetails (Channel, Date, Time) VALUES (@Channel, @Date, @Time)";
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@Channel", channel);
-                        cmd.Parameters.AddWithValue("@Date", date);
-                        cmd.Parameters.AddWithValue("@Time", time);
-                        cmd.ExecuteNonQuery();
-                    }
+                    int count = (int)cmd.ExecuteScalar();
+                    return count > 0; // Return true if CallId already exists
                 }
-                WriteToFile($"Data saved to database: Channel={channel}, Date={date.ToShortDateString()}, Time={time}");
+                catch (Exception ex)
+                {
+                    WriteToFile($"Error checking if CallId exists: {ex.Message}");
+                    return false;
+                }
             }
-            catch (Exception ex)
+        }
+
+        private void SaveToDatabase(string callId, int channel, DateTime dateTime)
+        {
+            string query = "INSERT INTO ProcessedFiles_New (CallId, Channel, Date, Time) VALUES (@CallId, @Channel, @Date, @Time)";
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            using (SqlCommand cmd = new SqlCommand(query, conn))
             {
-                WriteToFile($"Error saving to database: {ex.Message}");
+                cmd.Parameters.AddWithValue("@CallId", callId);
+                cmd.Parameters.AddWithValue("@Channel", channel);
+                cmd.Parameters.AddWithValue("@Date", dateTime.Date);
+                cmd.Parameters.AddWithValue("@Time", dateTime.TimeOfDay);
+
+                try
+                {
+                    conn.Open();
+                    int rowsAffected = cmd.ExecuteNonQuery();
+                    WriteToFile($"Inserted into ProcessedFiles_New - CallId: {callId}, Channel: {channel}, Date: {dateTime:yyyy-MM-dd}, Time: {dateTime:HH:mm:ss}, Rows Affected: {rowsAffected}");
+                }
+                catch (Exception ex)
+                {
+                    WriteToFile($"Error saving to database: {ex.Message}");
+                }
             }
         }
 

@@ -60,4 +60,55 @@ CREATE TABLE ProcessedFiles_New (
     Channel INT,
     [Date] DATE,
     [Time] TIME
-);
+); 
+
+```
+## Service Functionality
+
+- **Polling Interval**: 
+  - The service checks the source directory every 30 seconds.
+
+- **File Processing**:
+  - **Extract Information**: 
+    - The expected file name format is `P{Channel} {Date} {Time}` (e.g., `P0 01-10-2011 142536`).
+  - **Generate CallId**: 
+    - Constructed as `Channel-YYYYMMDDHHMMSS` (e.g., `0-20110101142536`).
+  - **Check for Duplicates**: 
+    - The service verifies if the `CallId` exists in the database before inserting a new record.
+  - **Insert Data**: 
+    - Inserts records into the `ProcessedFiles_New` table if the `CallId` is unique.
+
+- **File Management**: 
+  - Moves files from the source directory to the processed directory after successful processing.
+ 
+
+## Error Handling
+
+- **Format Errors**: 
+  - Logs issues related to invalid file formats.
+
+- **Database Errors**: 
+  - Captures errors encountered during database operations.
+
+- **Logging Errors**: 
+  - Handles errors while writing logs to files.
+
+## Logging
+
+- **Logs**:
+  - Logs are stored in the `Logs` folder within the application directory.
+  - They include:
+    - Service start and stop times
+    - Processing details and any errors encountered
+    - 
+## Contact
+
+- **For support or inquiries, please reach out to Pratham Ghosalkar.**
+
+### Instructions for Use
+
+1. Replace placeholders (e.g., `YOUR_SERVER_NAME`, `YOUR_DATABASE_NAME`, `YOUR_USER_ID`, `YOUR_PASSWORD`, and contact information) with actual values.
+2. Save this content in a file named `README.md` in the root of your GitHub repository.
+3. Adjust any paths or specific instructions based on your project's needs.
+
+This README provides a comprehensive guide to understanding, installing, configuring, and running the File Transfer Windows Service.
